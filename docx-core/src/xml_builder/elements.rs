@@ -136,6 +136,8 @@ impl<W: Write> XMLBuilder<W> {
     open!(open_paragraph_property_default, "w:pPrDefault");
     // i.e. <w:qFormat ... >
     closed!(q_format, "w:qFormat");
+    // i.e. <w:altChunk r:id="..." />
+    closed!(alt_chunk, "w:altChunk", "r:id");
     // i.e. <w:uiPriority ... >
     closed_with_usize!(ui_priority, "w:uiPriority");
     // i.e. <w:semiHidden ... >

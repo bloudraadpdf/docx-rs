@@ -23,6 +23,7 @@ pub enum DocumentChild {
     CommentStart(Box<CommentRangeStart>),
     CommentEnd(CommentRangeEnd),
     StructuredDataTag(Box<StructuredDataTag>),
+    AltChunk(Box<AltChunk>),
     TableOfContents(Box<TableOfContents>),
     Section(Box<Section>),
 }
@@ -72,6 +73,12 @@ impl Serialize for DocumentChild {
             DocumentChild::StructuredDataTag(ref r) => {
                 let mut t = serializer.serialize_struct("StructuredDataTag", 2)?;
                 t.serialize_field("type", "structuredDataTag")?;
+                t.serialize_field("data", r)?;
+                t.end()
+            }
+            DocumentChild::AltChunk(ref r) => {
+                let mut t = serializer.serialize_struct("AltChunk", 2)?;
+                t.serialize_field("type", "altChunk")?;
                 t.serialize_field("data", r)?;
                 t.end()
             }
@@ -231,6 +238,11 @@ impl Document {
         self
     }
 
+    pub fn add_alt_chunk(mut self, a: AltChunk) -> Self {
+        self.children.push(DocumentChild::AltChunk(Box::new(a)));
+        self
+    }
+
     pub fn add_table_of_contents(mut self, t: TableOfContents) -> Self {
         self.children
             .push(DocumentChild::TableOfContents(Box::new(t)));
@@ -266,6 +278,7 @@ impl BuildXML for DocumentChild {
             DocumentChild::CommentStart(v) => v.build_to(stream),
             DocumentChild::CommentEnd(v) => v.build_to(stream),
             DocumentChild::StructuredDataTag(v) => v.build_to(stream),
+            DocumentChild::AltChunk(v) => v.build_to(stream),
             DocumentChild::TableOfContents(v) => v.build_to(stream),
             DocumentChild::Section(v) => v.build_to(stream),
         }

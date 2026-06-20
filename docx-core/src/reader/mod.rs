@@ -1,5 +1,6 @@
 mod a_graphic;
 mod a_graphic_data;
+mod alt_chunk;
 mod attributes;
 mod bookmark_end;
 mod bookmark_start;

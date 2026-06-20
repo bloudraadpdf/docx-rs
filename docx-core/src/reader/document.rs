@@ -65,6 +65,11 @@ impl FromXML for Document {
                             }
                             continue;
                         }
+                        XMLElement::AltChunk => {
+                            let a = AltChunk::read(&mut parser, &attributes)?;
+                            doc = doc.add_alt_chunk(a);
+                            continue;
+                        }
                         _ => {}
                     }
                 }

@@ -21,6 +21,8 @@ pub(crate) const THEME_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme";
 pub(crate) const IMAGE_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+pub(crate) const ALT_CHUNK_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/aFChunk";
 pub(crate) const HYPERLINK_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
 // 2011

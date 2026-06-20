@@ -352,6 +352,11 @@ pub fn read_docx(buf: &[u8]) -> Result<Docx, ReaderError> {
     let media = rels.find_target_path(IMAGE_TYPE);
     docx = add_images(docx, media, &mut archive);
 
+    // Read altChunk parts (embedded HTML/XHTML/MHTML) and attach their
+    // bytes + inferred MIME type to the matching altChunk children.
+    let alt_chunks = rels.find_target_path(ALT_CHUNK_TYPE);
+    docx = add_alt_chunks(docx, alt_chunks, &mut archive);
+
     // Read hyperlinks
     let links = rels.find_target_path(HYPERLINK_TYPE);
     if let Some(paths) = links {
@@ -380,4 +385,73 @@ fn add_images(
         }
     }
     docx
+}
+
+fn add_alt_chunks(
+    mut docx: Docx,
+    alt_chunks: Option<Vec<(RId, PathBuf, Option<String>)>>,
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+) -> Docx {
+    let Some(paths) = alt_chunks else {
+        return docx;
+    };
+    let mut by_id: HashMap<RId, (Option<String>, Vec<u8>)> = HashMap::new();
+    for (id, path, ..) in paths {
+        if let Some(p) = path.to_str() {
+            // altChunk targets are frequently outside `word/` (e.g.
+            // `../chunk.xhtml`); resolve `.`/`..` so the zip lookup matches.
+            let normalised = normalise_zip_path(p);
+            if let Ok(data) = read_zip(archive, &normalised) {
+                by_id.insert(id, (infer_alt_chunk_content_type(&normalised), data));
+            }
+        }
+    }
+    for child in &mut docx.document.children {
+        if let DocumentChild::AltChunk(alt_chunk) = child {
+            if let Some((content_type, data)) = by_id.get(&alt_chunk.id) {
+                alt_chunk.content_type = content_type.clone();
+                alt_chunk.data = Some(data.clone());
+            }
+        }
+    }
+    docx
+}
+
+// Resolve `.` and `..` segments in a package-relative path so a target like
+// `word/../chunk.xhtml` becomes `chunk.xhtml`, matching the zip entry name.
+fn normalise_zip_path(path: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for segment in path.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out.join("/")
+}
+
+// Infer the MIME type of an altChunk part from its file extension. Word
+// emits .htm/.html (HTML), .xhtml (XHTML), .mht/.mhtml (MHTML), and more
+// rarely .xml/.txt/.rtf.
+fn infer_alt_chunk_content_type(path: &str) -> Option<String> {
+    let lower = path.to_ascii_lowercase();
+    let ty = if lower.ends_with(".mht") || lower.ends_with(".mhtml") {
+        "message/rfc822"
+    } else if lower.ends_with(".xhtml") || lower.ends_with(".xht") {
+        "application/xhtml+xml"
+    } else if lower.ends_with(".htm") || lower.ends_with(".html") {
+        "text/html"
+    } else if lower.ends_with(".xml") {
+        "application/xml"
+    } else if lower.ends_with(".txt") {
+        "text/plain"
+    } else if lower.ends_with(".rtf") {
+        "application/rtf"
+    } else {
+        return None;
+    };
+    Some(ty.to_string())
 }
