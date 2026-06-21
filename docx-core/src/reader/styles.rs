@@ -81,4 +81,33 @@ mod tests {
         );
         assert_eq!(s, styles);
     }
+
+    // Real-world documents (e.g. commoncrawl 139072a81c4cc1f8 and
+    // e43d5da09ec72595) carry a table style whose `<w:tblPr>` contains a
+    // bare `<w:jc/>` with no `w:val`. Word tolerates this; the reader must
+    // not index past the empty attribute list, and a missing `w:val` is
+    // semantically identical to the element being absent (no alignment
+    // override). Comparing the two parses isolates exactly that contract
+    // without coupling to unrelated reader defaults.
+    #[test]
+    fn test_table_style_jc_without_val_attribute_does_not_panic() {
+        let with_bare_jc = r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:style w:type="table" w:styleId="TableNormal">
+        <w:name w:val="Normal Table"></w:name>
+        <w:tblPr>
+            <w:jc/>
+        </w:tblPr>
+    </w:style>
+</w:styles>"#;
+        let without_jc = r#"<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:style w:type="table" w:styleId="TableNormal">
+        <w:name w:val="Normal Table"></w:name>
+        <w:tblPr>
+        </w:tblPr>
+    </w:style>
+</w:styles>"#;
+        let bare = Styles::from_xml(with_bare_jc.as_bytes()).expect("bare table-style jc parses");
+        let absent = Styles::from_xml(without_jc.as_bytes()).expect("absent jc parses");
+        assert_eq!(bare, absent);
+    }
 }

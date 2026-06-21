@@ -36,8 +36,11 @@ impl ElementReader for Level {
                     let e = XMLElement::from_str(&name.local_name).unwrap();
                     match e {
                         XMLElement::ParagraphStyle => {
-                            let id = attributes[0].value.clone();
-                            style_id = Some(id);
+                            // A bare `<w:pStyle/>` (no `w:val`) names no
+                            // style; do not index past the empty list.
+                            if let Some(id) = read_val(&attributes) {
+                                style_id = Some(id);
+                            }
                         }
                         XMLElement::ParagraphProperty => {
                             if let Ok(pr) = ParagraphProperty::read(r, attrs) {
@@ -52,27 +55,58 @@ impl ElementReader for Level {
                             continue;
                         }
                         XMLElement::Start => {
-                            start = Start::new(usize::from_str(&attributes[0].value)?);
+                            // `w:start/@w:val` is the first ordinal. A bare
+                            // `<w:start/>` keeps the default; an unparseable
+                            // value is ignored rather than aborting the read.
+                            if let Some(v) = read_val(&attributes)
+                                .and_then(|s| usize::from_str(&s).ok())
+                            {
+                                start = Start::new(v);
+                            }
                         }
                         XMLElement::NumberFormat => {
-                            num_fmt = NumberFormat::new(attributes[0].value.clone());
+                            // `w:numFmt/@w:val` is the format token. A bare
+                            // `<w:numFmt/>` keeps the `decimal` default.
+                            if let Some(v) = read_val(&attributes) {
+                                num_fmt = NumberFormat::new(v);
+                            }
                         }
                         XMLElement::Suffix => {
-                            suffix = LevelSuffixType::from_str(&attributes[0].value)?;
+                            // `w:suff/@w:val` is the level suffix. A bare
+                            // `<w:suff/>` keeps the `tab` default; an unknown
+                            // value is ignored rather than aborting the read.
+                            if let Some(v) = read_val(&attributes)
+                                .and_then(|s| LevelSuffixType::from_str(&s).ok())
+                            {
+                                suffix = v;
+                            }
                         }
                         XMLElement::IsLgl => {
                             is_lgl = Some(IsLgl::new());
                         }
                         XMLElement::LevelText => {
-                            level_text = LevelText::new(attributes[0].value.clone());
+                            // `w:lvlText` carries the numbering text format in
+                            // its `w:val` attribute. A bare `<w:lvlText/>` (no
+                            // `w:val`), which Word tolerates, must not index
+                            // past the empty attribute list; treat it as the
+                            // empty format string.
+                            level_text = LevelText::new(read_val(&attributes).unwrap_or_default());
                         }
                         XMLElement::LevelRestart => {
-                            if let Ok(v) = u32::from_str(&attributes[0].value) {
+                            // `w:lvlRestart/@w:val` is optional; a bare
+                            // element or an unparseable value leaves it unset.
+                            if let Some(v) = read_val(&attributes)
+                                .and_then(|s| u32::from_str(&s).ok())
+                            {
                                 level_restart = Some(LevelRestart::new(v));
                             }
                         }
                         XMLElement::LevelJustification => {
-                            jc = LevelJc::new(attributes[0].value.clone());
+                            // `w:lvlJc/@w:val` is the alignment. A bare
+                            // `<w:lvlJc/>` keeps the `left` default.
+                            if let Some(v) = read_val(&attributes) {
+                                jc = LevelJc::new(v);
+                            }
                         }
                         XMLElement::Indent => {
                             let i = read_indent(&attributes)?;

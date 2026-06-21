@@ -245,4 +245,49 @@ mod tests {
             .add_numbering(num);
         assert_eq!(n, nums)
     }
+
+    // Real-world documents (e.g. commoncrawl d29ee5629c15fd3c) contain a
+    // bare `<w:lvlText/>` and other level children without a `w:val`
+    // attribute. Word tolerates these; the reader must not index past the
+    // empty attribute list. Each missing `w:val` falls back to its OOXML
+    // default rather than panicking.
+    #[test]
+    fn test_level_children_without_val_attribute_do_not_panic() {
+        let xml = r#"<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+    <w:abstractNum w:abstractNumId="0">
+        <w:lvl w:ilvl="0">
+            <w:start/>
+            <w:numFmt/>
+            <w:lvlText/>
+            <w:lvlJc/>
+            <w:pStyle/>
+            <w:lvlRestart/>
+            <w:suff/>
+        </w:lvl>
+    </w:abstractNum>
+    <w:num w:numId="1">
+        <w:abstractNumId w:val="0"/>
+    </w:num>
+</w:numbering>"#;
+        let n = Numberings::from_xml(xml.as_bytes()).expect("bare level children parse");
+        let mut nums = Numberings::new();
+        // Every bare child falls back to its OOXML default: empty level
+        // text, default `Start`, `decimal` format, `left` justification,
+        // `tab` suffix, no paragraph style, no level restart.
+        nums = nums
+            .add_abstract_numbering(
+                AbstractNumbering::new(0).add_level(
+                    Level::new(
+                        0,
+                        Start::default(),
+                        NumberFormat::new("decimal"),
+                        LevelText::new(""),
+                        LevelJc::new("left"),
+                    )
+                    .suffix(LevelSuffixType::Tab),
+                ),
+            )
+            .add_numbering(Numbering::new(1, 0));
+        assert_eq!(n, nums);
+    }
 }

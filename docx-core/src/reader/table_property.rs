@@ -37,7 +37,13 @@ impl ElementReader for TableProperty {
                             }
                         }
                         XMLElement::Justification => {
-                            if let Ok(v) = TableAlignmentType::from_str(&attributes[0].value) {
+                            // `w:jc` carries the alignment in its `w:val`
+                            // attribute. A bare `<w:jc/>` (no `w:val`),
+                            // which Word tolerates, must not index past the
+                            // empty attribute list; treat it as no override.
+                            if let Some(v) = read_val(&attributes)
+                                .and_then(|s| TableAlignmentType::from_str(&s).ok())
+                            {
                                 tp = tp.align(v);
                             }
                         }
