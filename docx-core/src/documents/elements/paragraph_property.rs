@@ -48,6 +48,11 @@ pub struct ParagraphProperty {
     pub adjust_right_ind: Option<AdjustRightInd>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snap_to_grid: Option<bool>,
+    // w15:collapsed — Word 2013+ collapsed-heading flag (read only). When set on
+    // a heading paragraph, Word suppresses the heading's collapsed section body
+    // in print; consumers read this to reproduce that suppression.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collapsed: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shading: Option<Shading>,
     // read only
@@ -108,6 +113,11 @@ impl ParagraphProperty {
 
     pub fn snap_to_grid(mut self, v: bool) -> Self {
         self.snap_to_grid = Some(v);
+        self
+    }
+
+    pub fn collapsed(mut self, v: bool) -> Self {
+        self.collapsed = Some(v);
         self
     }
 

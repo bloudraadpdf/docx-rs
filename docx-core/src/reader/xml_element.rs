@@ -61,6 +61,7 @@ pub enum XMLElement {
     KeepLines,
     PageBreakBefore,
     WidowControl,
+    Collapsed,
     DivId,
     Div,
     DivsChild,
@@ -418,6 +419,9 @@ impl FromStr for XMLElement {
             "keepLines" => Ok(XMLElement::KeepLines),
             "pageBreakBefore" => Ok(XMLElement::PageBreakBefore),
             "widowControl" => Ok(XMLElement::WidowControl),
+            // w15:collapsed — the reader dispatches on the bare local name
+            // (the w15 prefix is already stripped), so match "collapsed".
+            "collapsed" => Ok(XMLElement::Collapsed),
             "headerReference" => Ok(XMLElement::HeaderReference),
             "footerReference" => Ok(XMLElement::FooterReference),
             "titlePg" => Ok(XMLElement::TitlePg),

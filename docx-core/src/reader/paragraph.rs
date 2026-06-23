@@ -154,6 +154,38 @@ mod tests {
     }
 
     #[test]
+    fn test_read_collapsed() {
+        let c = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml">
+    <w:p>
+        <w:pPr>
+            <w:pStyle w:val="Heading2"/>
+            <w15:collapsed/>
+        </w:pPr>
+        <w:r><w:t>h</w:t></w:r>
+    </w:p>
+</w:document>"#;
+        let mut parser = EventReader::new(c.as_bytes());
+        let p = Paragraph::read(&mut parser, &[]).unwrap();
+        assert_eq!(p.property.collapsed, Some(true));
+    }
+
+    #[test]
+    fn test_read_collapsed_off_is_none() {
+        // CT_OnOff false form must not set the flag.
+        let c = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml">
+    <w:p>
+        <w:pPr>
+            <w15:collapsed w:val="0"/>
+        </w:pPr>
+        <w:r><w:t>h</w:t></w:r>
+    </w:p>
+</w:document>"#;
+        let mut parser = EventReader::new(c.as_bytes());
+        let p = Paragraph::read(&mut parser, &[]).unwrap();
+        assert_eq!(p.property.collapsed, None);
+    }
+
+    #[test]
     fn test_read_indent_start_chars() {
         let c = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
     <w:p>
