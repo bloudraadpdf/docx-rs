@@ -1,6 +1,7 @@
 use std::io::Read;
 use std::str::FromStr;
 
+use crate::escape::replace_escaped;
 use crate::VertAlignType;
 
 use super::*;
@@ -49,6 +50,12 @@ impl ElementReader for RunProperty {
         _attrs: &[OwnedAttribute],
     ) -> Result<Self, ReaderError> {
         let mut rp = RunProperty::new();
+        // Recover text wrongly nested directly inside <w:rPr> (a generator bug;
+        // Word's lenient reader keeps it). `capturing_text` gates the recovery to
+        // the span between a <w:t> start and its end, so indentation whitespace
+        // between property elements is not captured.
+        let mut capturing_text = false;
+        let mut recovered = String::new();
         loop {
             let e = r.next();
             match e {
@@ -166,13 +173,27 @@ impl ElementReader for RunProperty {
                                 rp = rp.delete(del);
                             }
                         }
+                        // <w:t> directly inside <w:rPr> is malformed, but Word
+                        // recovers its text; capture until the matching end.
+                        XMLElement::Text => capturing_text = true,
                         _ => {}
                     }
                 }
                 Ok(XmlEvent::EndElement { name, .. }) => {
                     let e = XMLElement::from_str(&name.local_name).unwrap();
+                    if e == XMLElement::Text {
+                        capturing_text = false;
+                    }
                     if e == XMLElement::RunProperty {
+                        if !recovered.is_empty() {
+                            rp.recovered_text = Some(recovered);
+                        }
                         return Ok(rp);
+                    }
+                }
+                Ok(XmlEvent::Characters(c)) | Ok(XmlEvent::Whitespace(c)) => {
+                    if capturing_text {
+                        recovered.push_str(&replace_escaped(&c));
                     }
                 }
                 Err(_) => return Err(ReaderError::XMLReadError),

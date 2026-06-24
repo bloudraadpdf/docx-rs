@@ -82,7 +82,13 @@ impl ElementReader for Run {
                                     }
                                 }
                                 XMLElement::RunProperty => {
-                                    let p = RunProperty::read(r, &attributes)?;
+                                    let mut p = RunProperty::read(r, &attributes)?;
+                                    // Drain text recovered from a malformed <w:t>
+                                    // nested inside <w:rPr> into a real run text
+                                    // child (already unescaped during capture).
+                                    if let Some(t) = p.recovered_text.take() {
+                                        run = run.add_text_without_escape(t);
+                                    }
                                     run = run.set_property(p);
                                 }
                                 XMLElement::Text => text_state = TextState::Text,
@@ -213,6 +219,26 @@ mod tests {
                     color: Some(Color::new("C9211E")),
                     ..RunProperty::default()
                 },
+            }
+        );
+    }
+
+    #[test]
+    fn test_recovers_text_nested_in_run_property() {
+        // A generator bug nests <w:t> directly inside <w:rPr>; Word's lenient
+        // reader recovers it as run text. The recovered text must become a real
+        // RunChild::Text, and the stored RunProperty must carry no leftover
+        // recovered_text (it is drained).
+        let c = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:r><w:rPr><w:t>92</w:t></w:rPr></w:r>
+</w:document>"#;
+        let mut parser = EventReader::new(c.as_bytes());
+        let run = Run::read(&mut parser, &[]).unwrap();
+        assert_eq!(
+            run,
+            Run {
+                children: vec![RunChild::Text(Text::new("92"))],
+                run_property: RunProperty::default(),
             }
         );
     }

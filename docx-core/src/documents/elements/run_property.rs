@@ -59,6 +59,12 @@ pub struct RunProperty {
     pub positional_tab: Option<PositionalTab>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shading: Option<Shading>,
+    // Text wrongly nested directly inside <w:rPr> (a generator bug; Word's
+    // lenient reader recovers it as run text). Captured during read and drained
+    // by Run::read into a RunChild::Text, so it is always None on a stored
+    // RunProperty; never serialised.
+    #[serde(skip)]
+    pub recovered_text: Option<String>,
 }
 
 impl RunProperty {
