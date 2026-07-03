@@ -276,6 +276,57 @@ mod tests {
     }
 
     #[test]
+    fn test_read_text_with_entities() {
+        // Predefined entities and character references embedded in run text must
+        // be resolved and coalesced into a single text child. quick-xml 0.37+
+        // emits each reference as a separate event, so the parser has to merge
+        // them back with the surrounding text.
+        let c = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:r><w:t>R&amp;D &lt;x&gt;&#33;</w:t></w:r></w:document>"#;
+        let mut parser = EventReader::new(c.as_bytes());
+        let run = Run::read(&mut parser, &[]).unwrap();
+        assert_eq!(
+            run,
+            Run {
+                children: vec![RunChild::Text(Text::without_escape("R&D <x>!"))],
+                run_property: RunProperty::default(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_read_instr_text_preserves_quoted_entities() {
+        // Field instructions capture only the first Characters event, so an
+        // escaped quote in the instruction must not split the text run or the
+        // instruction is truncated at the first entity.
+        let c = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:r><w:instrText>HYPERLINK &quot;u&quot;</w:instrText></w:r></w:document>"#;
+        let mut parser = EventReader::new(c.as_bytes());
+        let run = Run::read(&mut parser, &[]).unwrap();
+        assert_eq!(
+            run,
+            Run {
+                children: vec![RunChild::InstrTextString("HYPERLINK \"u\"".to_string())],
+                run_property: RunProperty::default(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_read_text_with_nbsp_extension() {
+        // `&nbsp;` is not a predefined XML entity; it is kept verbatim by the
+        // parser and resolved to a space by the reader's escape handling.
+        let c = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:r><w:t>A&nbsp;B</w:t></w:r></w:document>"#;
+        let mut parser = EventReader::new(c.as_bytes());
+        let run = Run::read(&mut parser, &[]).unwrap();
+        assert_eq!(
+            run,
+            Run {
+                children: vec![RunChild::Text(Text::new("A B"))],
+                run_property: RunProperty::default(),
+            }
+        );
+    }
+
+    #[test]
     fn test_read_empty_br() {
         let c = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:r><w:br /></w:r>

@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::io::{BufReader, Read};
 
 use quick_xml::encoding::Decoder;
-use quick_xml::events::{BytesEnd, BytesStart, Event};
+use quick_xml::events::{BytesEnd, BytesRef, BytesStart, Event};
 use quick_xml::Reader;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -88,47 +88,77 @@ impl<R: Read> EventReader<R> {
             return Ok(event);
         }
 
+        // Coalesce a contiguous run of textual data into a single event.
+        // quick-xml 0.37+ splits entity and character references out of the
+        // text stream as `GeneralRef` events; the readers, however, rely on
+        // one `Characters`/`Whitespace` event per run (several take only the
+        // first such event, e.g. field instructions), so text and references
+        // are merged back together here, matching the previous contract.
+        let mut text: Option<String> = None;
+
         loop {
             self.buf.clear();
             match self.reader.read_event_into(&mut self.buf)? {
+                Event::Text(chunk) => {
+                    let decoded = chunk.decode()?;
+                    let unescaped = quick_xml::escape::unescape(&decoded)?;
+                    text.get_or_insert_with(String::new).push_str(&unescaped);
+                }
+                Event::GeneralRef(reference) => {
+                    append_reference(text.get_or_insert_with(String::new), &reference)?;
+                }
                 Event::Start(element) => {
                     let decoder = self.reader.decoder();
-                    let event = Self::build_start_event(element, decoder)?;
-                    return Ok(event);
+                    let start = Self::build_start_event(element, decoder)?;
+                    return Ok(self.emit(text, start));
                 }
                 Event::Empty(element) => {
                     let decoder = self.reader.decoder();
-                    let event = Self::build_start_event(element, decoder)?;
-                    if let XmlEvent::StartElement { name, .. } = &event {
+                    let start = Self::build_start_event(element, decoder)?;
+                    if let XmlEvent::StartElement { name, .. } = &start {
                         self.pending
                             .push_back(XmlEvent::EndElement { name: name.clone() });
                     }
-                    return Ok(event);
+                    return Ok(self.emit(text, start));
                 }
                 Event::End(element) => {
                     let name = build_name_from_end(&element)?;
-                    return Ok(XmlEvent::EndElement { name });
+                    return Ok(self.emit(text, XmlEvent::EndElement { name }));
                 }
-                Event::Text(text) => {
-                    let text = text.unescape()?.into_owned();
-                    if text.chars().all(char::is_whitespace) {
-                        return Ok(XmlEvent::Whitespace(text));
-                    } else {
-                        return Ok(XmlEvent::Characters(text));
-                    }
-                }
-                Event::CData(text) => {
-                    let decoded = self.reader.decoder().decode(text.as_ref())?.into_owned();
-                    return Ok(XmlEvent::Characters(decoded));
+                Event::CData(chunk) => {
+                    let decoded = self.reader.decoder().decode(chunk.as_ref())?.into_owned();
+                    return Ok(self.emit(text, XmlEvent::Characters(decoded)));
                 }
                 Event::Eof => {
-                    self.finished = true;
-                    return Ok(XmlEvent::EndDocument);
+                    return Ok(match text {
+                        Some(text) => {
+                            self.pending.push_front(XmlEvent::EndDocument);
+                            classify_text(text)
+                        }
+                        None => {
+                            self.finished = true;
+                            XmlEvent::EndDocument
+                        }
+                    });
                 }
                 Event::Decl(_) | Event::PI(_) | Event::Comment(_) | Event::DocType(_) => {
-                    // Skip non-structural events
+                    // Skip non-structural events; keep accumulating textual data.
                 }
             }
+        }
+    }
+
+    /// Emits any accumulated textual data as a single event, deferring
+    /// `boundary` (the structural event that terminated the run) until the
+    /// next read. When no text was accumulated, `boundary` is returned
+    /// directly.
+    fn emit(&mut self, text: Option<String>, boundary: XmlEvent) -> XmlEvent {
+        match text {
+            Some(text) => {
+                self.pending.push_front(boundary);
+                classify_text(text)
+            }
+            None => boundary,
         }
     }
 
@@ -167,6 +197,29 @@ impl<R: Read> Iterator for EventReader<R> {
     }
 }
 
+fn classify_text(text: String) -> XmlEvent {
+    if text.chars().all(char::is_whitespace) {
+        XmlEvent::Whitespace(text)
+    } else {
+        XmlEvent::Characters(text)
+    }
+}
+
+/// Resolves an entity or character reference (`&amp;`, `&#9;`, ...) into its
+/// textual value and appends it to `out`. Predefined XML entities and
+/// character references are resolved; an unknown named entity is kept verbatim
+/// (as `&name;`) so downstream escape handling can resolve DOCX extensions such
+/// as `&nbsp;`.
+fn append_reference(out: &mut String, reference: &BytesRef<'_>) -> Result<(), quick_xml::Error> {
+    let name = reference.decode()?;
+    let entity = format!("&{name};");
+    match quick_xml::escape::unescape(&entity) {
+        Ok(resolved) => out.push_str(&resolved),
+        Err(_) => out.push_str(&entity),
+    }
+    Ok(())
+}
+
 fn build_name_from_start(element: &BytesStart<'_>) -> Result<OwnedName, quick_xml::Error> {
     let name = element.name();
     Ok(split_qname(name.as_ref()))
@@ -203,7 +256,8 @@ fn build_attributes(
     let mut attributes = Vec::new();
     for attr_result in element.attributes().with_checks(false) {
         let attr = attr_result.map_err(quick_xml::Error::from)?;
-        let value = attr.decode_and_unescape_value(decoder)?.into_owned();
+        let decoded = decoder.decode(attr.value.as_ref())?;
+        let value = quick_xml::escape::unescape(&decoded)?.into_owned();
         let name = split_qname(attr.key.as_ref());
         attributes.push(OwnedAttribute { name, value });
     }
