@@ -20,3 +20,4 @@ docx-core/bindings
 test.json
 image.json
 docx-core/tests/output/*.json
+*.snap.new
