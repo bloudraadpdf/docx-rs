@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::io::{BufReader, Read};
 
-use quick_xml::encoding::Decoder;
+use quick_xml::encoding::DecodingReader;
 use quick_xml::events::{BytesEnd, BytesRef, BytesStart, Event};
 use quick_xml::Reader;
 
@@ -56,7 +56,7 @@ pub enum XmlEvent {
 }
 
 pub struct EventReader<R: Read> {
-    reader: Reader<BufReader<R>>,
+    reader: Reader<DecodingReader<BufReader<R>>>,
     buf: Vec<u8>,
     pending: VecDeque<XmlEvent>,
     finished: bool,
@@ -64,7 +64,7 @@ pub struct EventReader<R: Read> {
 
 impl<R: Read> EventReader<R> {
     pub fn new(reader: R) -> Self {
-        let mut reader = Reader::from_reader(BufReader::new(reader));
+        let mut reader = Reader::from_reader(DecodingReader::new(BufReader::new(reader)));
         {
             let config = reader.config_mut();
             config.trim_text(false);
@@ -100,21 +100,19 @@ impl<R: Read> EventReader<R> {
             self.buf.clear();
             match self.reader.read_event_into(&mut self.buf)? {
                 Event::Text(chunk) => {
-                    let decoded = chunk.decode()?;
-                    let unescaped = quick_xml::escape::unescape(&decoded)?;
+                    let content = chunk.xml10_content();
+                    let unescaped = quick_xml::escape::unescape(&content)?;
                     text.get_or_insert_with(String::new).push_str(&unescaped);
                 }
                 Event::GeneralRef(reference) => {
                     append_reference(text.get_or_insert_with(String::new), &reference)?;
                 }
                 Event::Start(element) => {
-                    let decoder = self.reader.decoder();
-                    let start = Self::build_start_event(element, decoder)?;
+                    let start = Self::build_start_event(element)?;
                     return Ok(self.emit(text, start));
                 }
                 Event::Empty(element) => {
-                    let decoder = self.reader.decoder();
-                    let start = Self::build_start_event(element, decoder)?;
+                    let start = Self::build_start_event(element)?;
                     if let XmlEvent::StartElement { name, .. } = &start {
                         self.pending
                             .push_back(XmlEvent::EndElement { name: name.clone() });
@@ -126,8 +124,8 @@ impl<R: Read> EventReader<R> {
                     return Ok(self.emit(text, XmlEvent::EndElement { name }));
                 }
                 Event::CData(chunk) => {
-                    let decoded = self.reader.decoder().decode(chunk.as_ref())?.into_owned();
-                    return Ok(self.emit(text, XmlEvent::Characters(decoded)));
+                    let characters = chunk.into_inner().into_owned();
+                    return Ok(self.emit(text, XmlEvent::Characters(characters)));
                 }
                 Event::Eof => {
                     return Ok(match text {
@@ -162,12 +160,9 @@ impl<R: Read> EventReader<R> {
         }
     }
 
-    fn build_start_event(
-        element: BytesStart<'_>,
-        decoder: Decoder,
-    ) -> Result<XmlEvent, quick_xml::Error> {
+    fn build_start_event(element: BytesStart<'_>) -> Result<XmlEvent, quick_xml::Error> {
         let name = build_name_from_start(&element)?;
-        let attributes = build_attributes(&element, decoder)?;
+        let attributes = build_attributes(&element)?;
         Ok(XmlEvent::StartElement {
             name,
             attributes,
@@ -211,8 +206,7 @@ fn classify_text(text: String) -> XmlEvent {
 /// (as `&name;`) so downstream escape handling can resolve DOCX extensions such
 /// as `&nbsp;`.
 fn append_reference(out: &mut String, reference: &BytesRef<'_>) -> Result<(), quick_xml::Error> {
-    let name = reference.decode()?;
-    let entity = format!("&{name};");
+    let entity = format!("&{};", &**reference);
     match quick_xml::escape::unescape(&entity) {
         Ok(resolved) => out.push_str(&resolved),
         Err(_) => out.push_str(&entity),
@@ -230,8 +224,8 @@ fn build_name_from_end(element: &BytesEnd<'_>) -> Result<OwnedName, quick_xml::E
     Ok(split_qname(name.as_ref()))
 }
 
-fn split_qname(raw: &[u8]) -> OwnedName {
-    let text = String::from_utf8_lossy(raw).into_owned();
+fn split_qname(text: &str) -> OwnedName {
+    let text = text.to_owned();
     if let Some(idx) = text.find(':') {
         let prefix = text[..idx].to_string();
         let local = text[idx + 1..].to_string();
@@ -249,17 +243,36 @@ fn split_qname(raw: &[u8]) -> OwnedName {
     }
 }
 
-fn build_attributes(
-    element: &BytesStart<'_>,
-    decoder: Decoder,
-) -> Result<Vec<OwnedAttribute>, quick_xml::Error> {
+fn build_attributes(element: &BytesStart<'_>) -> Result<Vec<OwnedAttribute>, quick_xml::Error> {
     let mut attributes = Vec::new();
     for attr_result in element.attributes().with_checks(false) {
         let attr = attr_result.map_err(quick_xml::Error::from)?;
-        let decoded = decoder.decode(attr.value.as_ref())?;
-        let value = quick_xml::escape::unescape(&decoded)?.into_owned();
+        let value = quick_xml::escape::unescape(&attr.value)?.into_owned();
         let name = split_qname(attr.key.as_ref());
         attributes.push(OwnedAttribute { name, value });
     }
     Ok(attributes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn characters(xml: &[u8]) -> Vec<String> {
+        EventReader::new(xml)
+            .filter_map(|event| match event.expect("the XML parses") {
+                XmlEvent::Characters(text) => Some(text),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_utf16_part_with_a_bom_reads_as_its_text() {
+        let mut xml = vec![0xFF, 0xFE];
+        for unit in "<?xml version=\"1.0\" encoding=\"UTF-16\"?><w:t>café</w:t>".encode_utf16() {
+            xml.extend_from_slice(&unit.to_le_bytes());
+        }
+        assert_eq!(characters(&xml), ["café"]);
+    }
 }
